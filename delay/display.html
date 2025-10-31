@@ -1,0 +1,789 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>Deconstruct Display</title>
+<style>
+  :root{ --bg:#0b0e14; --text:#e6e8eb; }
+  *{ box-sizing:border-box }
+  html,body{ height:100%; margin:0; background:var(--bg) }
+  #glwrap{ position:fixed; inset:0; background:#000 }
+  canvas{ display:block; width:100%; height:100% }
+  video,#cap{ display:none }
+
+  /* —— Startスプラッシュ（ホラーTV風） —— */
+  #splash{
+    position:fixed; inset:0; display:flex; align-items:center;
+    justify-content:center; pointer-events:auto;
+    background: radial-gradient(60% 60% at 50% 50%,
+      rgba(20,24,35,.35), transparent);
+    overflow:hidden;
+  }
+  #splash::before{
+    content:""; position:absolute; inset:-20%;
+    background:
+      repeating-linear-gradient(
+        0deg, rgba(255,255,255,.06), rgba(255,255,255,.06) 1px,
+              transparent 2px, transparent 4px
+      );
+    mix-blend-mode:overlay; opacity:.25; pointer-events:none;
+    animation: scan 6s linear infinite;
+  }
+  @keyframes scan{ from{ transform:translateY(-10%) }
+                   to{   transform:translateY(10%)  } }
+
+  /* Startボタン：グリッチ演出 */
+  #startBtn{
+    position:relative; z-index:2;
+    appearance:none; border:1px solid rgba(255,255,255,.28);
+    background:linear-gradient(180deg,#2b3a59,#1a2233);
+    color:var(--text); padding:22px 34px; border-radius:14px;
+    font-weight:800; font-size:20px; letter-spacing:.08em;
+    cursor:pointer; box-shadow:0 10px 26px rgba(0,0,0,.45),
+      inset 0 1px 0 rgba(255,255,255,.08);
+    text-transform:uppercase;
+    text-shadow:0 0 6px rgba(122,162,255,.25),
+      0 0 18px rgba(122,162,255,.22);
+    transform: perspective(800px) rotateX(2deg) skewX(-1deg);
+    overflow:hidden;
+  }
+  #startBtn::before,#startBtn::after{
+    content:attr(data-label); position:absolute; left:0; top:0;
+    width:100%; height:100%; display:flex; align-items:center;
+    justify-content:center; pointer-events:none; font-weight:800;
+    letter-spacing:.08em;
+  }
+  #startBtn::before{
+    color:rgba(255,60,60,.55); transform:translateX(-1px);
+    mix-blend-mode:screen; filter:blur(.3px);
+  }
+  #startBtn::after{
+    color:rgba(60,255,255,.55); transform:translateX(1px);
+    mix-blend-mode:screen; filter:blur(.3px);
+  }
+  .glitchy{ animation: btnGlitch 2.2s infinite steps(12) }
+  @keyframes btnGlitch{
+    0%{ clip-path:inset(0 0 0 0) }
+    10%{ clip-path:inset(10% 0 70% 0); transform:translateX(-1px) }
+    11%{ clip-path:inset(80% 0 5% 0); transform:translateX(1px) }
+    12%{ clip-path:inset(40% 0 30% 0); transform:translateX(0) }
+    55%{ clip-path:inset(0 0 0 0) }
+    60%{ clip-path:inset(60% 0 20% 0); transform:translateX(-1px) }
+    62%{ clip-path:inset(5% 0 80% 0); transform:translateX(1px) }
+    65%{ clip-path:inset(0 0 0 0); transform:none }
+    100%{ clip-path:inset(0 0 0 0) }
+  }
+
+  /* —— 走行中だけ出す Exit —— */
+  #toggle{
+    position:fixed; right:12px; bottom:12px; z-index:10;
+    appearance:none; border:1px solid rgba(255,255,255,.18);
+    background:rgba(10,15,25,.55); color:#e6e8eb;
+    padding:8px 12px; border-radius:10px; font-weight:600;
+    font-size:12px; backdrop-filter: blur(8px);
+    cursor:pointer; outline:none; display:none;
+  }
+  #toggle:hover{ filter:brightness(1.06) }
+
+  /* 無操作でカーソル非表示（実行中のみ） */
+  body.hide-cursor{ cursor:none }
+</style>
+</head>
+<body>
+<div id="glwrap"><canvas id="glcanvas"></canvas></div>
+
+<!-- Start画面（Exitは非表示） -->
+<div id="splash">
+  <button id="startBtn" class="glitchy" data-label="Start">Start</button>
+</div>
+
+<!-- 実行中のみ右下に出す -->
+<button id="toggle">Exit</button>
+
+<video id="v" playsinline autoplay muted></video>
+<canvas id="cap" width="320" height="240"></canvas>
+
+<script>
+/**
+ * @file 展示用ディスプレイ（StartはTVホラー風、Exitは走行中のみ）
+ * @note JSDoc / 80列 / ダブルクォート。
+ */
+
+/** @typedef {Record<string, any>} AnyMap */
+
+const $ = (s) => document.querySelector(s);
+
+/* ---------- 設定受信 ---------- */
+
+let bc = null;                 /** @type {BroadcastChannel|null} */
+let port = null;               /** @type {MessagePort|null} */
+let pc = null;                 /** @type {RTCPeerConnection|null} */
+let dc = null;                 /** @type {RTCDataChannel|null} */
+
+let cfg = defCfg();            /** @type {AnyMap} */
+function defCfg(){
+  return {
+    wave:"sine", minDelay:300, maxDelay:1400, period:5, rand:0.2,
+    fps:20, width:320, height:240,
+    mirror:true, flipY:true,                /* デフォルトON */
+    degAuto:true, degMin:0.05, degMax:0.75, degPeriod:8,
+    degRand:0.25, degManual:0.3,
+    dist:0.6, grain:0.3, glitchRate:0.25, glitchStr:0.4,
+    chroma:0.35, pixelate:0.15, desat:0.2, feedback:0.3, sym:0.0,
+    timeMode:false, transDur:10             /* 時間遷移: 既定OFF */
+  };
+}
+
+/** BroadcastChannel */
+function setupBroadcast(){
+  try{
+    bc = new BroadcastChannel("deconstruct-control");
+    bc.onmessage = (ev) => routeMessage(ev.data);
+    bc.postMessage({ kind:"hello" });
+  }catch{}
+}
+
+/** MessagePort（管理タブ直結） */
+window.addEventListener("message", (ev) => {
+  if (ev.data && ev.data.kind === "port" && ev.ports?.[0]) {
+    port = ev.ports[0];
+    port.onmessage = (e) => routeMessage(e.data);
+    port.start(); port.postMessage({ kind:"hello" });
+  }
+});
+
+/** ?rtc=1 なら手動WebRTC応答 */
+async function setupWebRTCIfNeeded(){
+  const want = new URL(location.href).searchParams.get("rtc");
+  if(!want) return;
+  pc = new RTCPeerConnection({ iceServers: [] });
+  pc.ondatachannel = (ev)=>{
+    dc = ev.channel;
+    dc.onmessage = (m)=>{ try{ routeMessage(JSON.parse(m.data)); }
+      catch{} };
+  };
+  const box = prompt("管理側 Offer を貼り付けてください");
+  if(!box) return;
+  try{ await pc.setRemoteDescription(JSON.parse(box)); }
+  catch{ alert("Offer 形式が不正です"); return; }
+  const ans = await pc.createAnswer();
+  await pc.setLocalDescription(ans);
+  await waitIce(pc);
+  alert(JSON.stringify(pc.localDescription));
+}
+
+/** @param {RTCPeerConnection} p */
+function waitIce(p){
+  return new Promise((res)=>{
+    if(p.iceGatheringState==="complete") return res(null);
+    p.addEventListener("icegatheringstatechange", ()=>{
+      if(p.iceGatheringState==="complete") res(null);
+    });
+  });
+}
+
+/** 設定/コマンドの分岐 */
+function routeMessage(msg){
+  if(!msg) return;
+  if(msg.kind === "config"){ onConfig(msg); return; }
+  if(msg.kind === "cmd"){
+    if(msg.action === "forceExit"){ exitToSplash(); }
+  }
+}
+
+/** 設定反映 */
+function onConfig(msg){
+  Object.assign(cfg, msg);
+  if(running || idleMode){ syncRes(); glResize(); }
+}
+
+/* ---------- コア：カメラ・遅延・描画 ---------- */
+
+const glCanvas = $("#glcanvas");
+const capCanvas = $("#cap");
+const capCtx = capCanvas.getContext("2d",
+  { alpha:false, desynchronized:true });
+const video = $("#v");
+const splash = $("#splash");
+const startBtn = $("#startBtn");
+const toggleBtn = $("#toggle");
+
+let running = false, stream = null;
+let idleMode = true;
+/** @type {{t:number,bmp:ImageBitmap|HTMLCanvasElement}[]} */
+let frames = [];
+let lastCaptureAt = 0, startEpoch = 0;
+let noise = 0, noiseTarget = 0, lastNoiseFlip = 0;
+let degNoise = 0, degNoiseTarget = 0, degLastFlip = 0;
+/* —— 時間遷移の開始時刻 —— */
+let transStart = 0;
+
+function syncRes(){
+  const w = cfg.width, h = cfg.height;
+  capCanvas.width = w; capCanvas.height = h;
+  glCanvas.width = w; glCanvas.height = h;
+}
+syncRes();
+
+function clampDelay(){
+  if(cfg.minDelay > cfg.maxDelay) cfg.maxDelay = cfg.minDelay;
+}
+function triangle(rad){ return (2/Math.PI)*Math.asin(Math.sin(rad)); }
+
+/** 遅延ターゲット（時間遷移モード対応） */
+function delayTargetMs(now){
+  clampDelay();
+
+  const center = (cfg.minDelay + cfg.maxDelay)/2;
+  const amp = Math.max(0,(cfg.maxDelay - cfg.minDelay)/2);
+  const omega = 2*Math.PI/(cfg.period*1000);
+
+  let base;
+  if(cfg.wave==="tri") base = triangle((now - startEpoch)*omega);
+  else if(cfg.wave==="smooth") base = 0;
+  else base = Math.sin((now - startEpoch)*omega);
+
+  const flipEvery = Math.max(150, cfg.period*1000/6);
+  if(now - lastNoiseFlip > flipEvery){
+    noiseTarget = (Math.random()*2 - 1); lastNoiseFlip = now;
+  }
+  noise += (noiseTarget - noise)*0.02;
+
+  const mix = (cfg.wave==="smooth") ? 1 : cfg.rand;
+  const oscill = (1 - mix)*base + mix*noise;
+
+  let target = center + amp*oscill;
+
+  if(cfg.timeMode){
+    const dur = Math.max(0.001, cfg.transDur)*1000;
+    const p = Math.min(1, Math.max(0, (now - transStart)/dur));
+    /* 遷移：0→最終レンジ
+       - オフセット(center)と振幅(amp)を同率pで拡大
+       - 0<=p<1 では最小/最大未満で推移し、p=1で通常レンジ
+    */
+    const scaled = (center*p) + (amp*p)*oscill;
+    target = Math.max(0, scaled);  /* 最初は0ms付近から */
+  }
+  return target;
+}
+
+function degradeAmount(now){
+  if(!cfg.degAuto) return cfg.degManual;
+  const omega = 2*Math.PI/(cfg.degPeriod*1000);
+  const base = (Math.sin((now - startEpoch)*omega) + 1)/2;
+  const flipEvery = Math.max(200, cfg.degPeriod*1000/5);
+  if(now - degLastFlip > flipEvery){
+    degNoiseTarget = (Math.random()*2 - 1); degLastFlip = now;
+  }
+  degNoise += (degNoiseTarget - degNoise)*0.03;
+  const n = (degNoise*0.5 + 0.5);
+  const mixed = (1 - cfg.degRand)*base + cfg.degRand*n;
+  return cfg.degMin + (cfg.degMax - cfg.degMin)*mixed;
+}
+
+function pruneOld(now){
+  const keepWindow = cfg.maxDelay + 1200;
+  const threshold = now - keepWindow;
+  while(frames.length && frames[0].t < threshold){
+    const f = frames.shift();
+    if(f && f.bmp && "close" in f.bmp){ try{ f.bmp.close(); }catch{} }
+  }
+}
+
+function findIndexFor(t){
+  let lo=0, hi=frames.length-1, ans=-1;
+  while(lo<=hi){
+    const mid=(lo+hi)>>>1;
+    if(frames[mid].t <= t){ ans=mid; lo=mid+1; } else hi=mid-1;
+  }
+  return ans;
+}
+
+async function snapshotBitmap(){
+  capCtx.drawImage(video, 0, 0, capCanvas.width, capCanvas.height);
+  if("createImageBitmap" in window) return await createImageBitmap(capCanvas);
+  const c = document.createElement("canvas");
+  c.width = capCanvas.width; c.height = capCanvas.height;
+  c.getContext("2d").drawImage(capCanvas,0,0); return c;
+}
+
+/* ---------- 実行制御 / フルスクリーン ---------- */
+
+async function goFullscreen(){
+  try{
+    const el = document.documentElement;
+    if(!document.fullscreenElement) await el.requestFullscreen();
+  }catch{}
+}
+
+/** Start → 実行開始（時間遷移の起点をリセット） */
+async function start(){
+  if(running) return;
+  await goFullscreen();
+  try{
+    stream = await navigator.mediaDevices.getUserMedia({
+      video:{
+        facingMode:"user",
+        width:{ ideal:cfg.width }, height:{ ideal:cfg.height },
+        frameRate:{ ideal:cfg.fps }
+      }, audio:false
+    });
+    video.srcObject = stream;
+    await video.play().catch(()=>{});
+    running = true; idleMode = false; splash.style.display = "none";
+    frames.forEach((f)=>{ if(f.bmp && "close" in f.bmp){
+      try{ f.bmp.close(); }catch{} }});
+    frames = []; noise = 0; noiseTarget = 0;
+    lastNoiseFlip = performance.now();
+    degNoise = 0; degNoiseTarget = 0; degLastFlip = performance.now();
+    lastCaptureAt = 0;
+    startEpoch = performance.now();
+    transStart = startEpoch;              /* ← 遷移開始時刻 */
+    setExitVisible(true);
+    captureLoop(); renderLoop();
+  }catch{
+    running = false; idleMode = true;
+    setExitVisible(false); splash.style.display = "flex";
+  }
+}
+
+/** Exit or 強制Exit → Start画面 */
+function exitToSplash(){
+  running = false; idleMode = true;
+  if(stream){ stream.getTracks().forEach((t)=>t.stop()); stream=null; }
+  frames.forEach((f)=>{ if(f.bmp && "close" in f.bmp){
+    try{ f.bmp.close(); }catch{} }});
+  frames = []; glClear(); setExitVisible(false);
+  splash.style.display = "flex";
+}
+
+function setExitVisible(on){
+  toggleBtn.style.display = on ? "block" : "none";
+}
+
+startBtn.addEventListener("click", start);
+toggleBtn.addEventListener("click", exitToSplash);
+
+/* 無操作でカーソル非表示（実行中のみ） */
+let lastMove = Date.now();
+function tickCursor(){
+  const idle = Date.now() - lastMove > 2500;
+  document.body.classList.toggle("hide-cursor", idle && running);
+  requestAnimationFrame(tickCursor);
+}
+["mousemove","mousedown","keydown","touchstart"].forEach((ev)=>{
+  window.addEventListener(ev, ()=>{ lastMove = Date.now(); },
+    { passive:true });
+});
+tickCursor();
+
+/* ---------- キャプチャループ ---------- */
+
+function captureLoop(){
+  if(!running) return;
+  const now = performance.now();
+  const captureInterval = 1000/Math.max(5, cfg.fps);
+  const schedule = ()=>{
+    if(video.requestVideoFrameCallback){
+      video.requestVideoFrameCallback(()=> captureLoop());
+    }else requestAnimationFrame(()=> captureLoop());
+  };
+  if(now - lastCaptureAt >= captureInterval){
+    lastCaptureAt = now;
+    snapshotBitmap().then((bmp)=>{
+      frames.push({ t:now, bmp }); pruneOld(now);
+    }).catch(()=>{}).finally(schedule);
+  }else schedule();
+}
+
+/* ---------- WebGL ---------- */
+
+let gl, progEffect, progBlit, loc={}, texSrc, fboA, fboB, texA, texB,
+  quadVBO;
+
+function glInit(){
+  if(gl) return;
+  gl = glCanvas.getContext("webgl",
+    { antialias:false, preserveDrawingBuffer:false });
+  if(!gl) return;
+  quadVBO = gl.createBuffer();
+  gl.bindBuffer(gl.ARRAY_BUFFER, quadVBO);
+  const quad = new Float32Array(
+    [-1,-1, 1,-1, -1,1, 1,-1, 1,1, -1,1]
+  );
+  gl.bufferData(gl.ARRAY_BUFFER, quad, gl.STATIC_DRAW);
+
+  progEffect = createProgram(VS, FS);
+  progBlit   = createProgram(VS, FS_BLIT);
+
+  gl.useProgram(progEffect);
+  loc.e_pos   = gl.getAttribLocation(progEffect, "a_pos");
+  loc.e_tex   = gl.getUniformLocation(progEffect, "u_tex");
+  loc.e_prev  = gl.getUniformLocation(progEffect, "u_prev");
+  loc.e_time  = gl.getUniformLocation(progEffect, "u_time");
+  loc.e_res   = gl.getUniformLocation(progEffect, "u_res");
+  loc.e_p1    = gl.getUniformLocation(progEffect, "u_p1");
+  loc.e_p2    = gl.getUniformLocation(progEffect, "u_p2");
+  loc.e_p3    = gl.getUniformLocation(progEffect, "u_p3");
+  loc.e_seed  = gl.getUniformLocation(progEffect, "u_seed");
+  loc.e_flipY = gl.getUniformLocation(progEffect, "u_flipY");
+  loc.e_idle  = gl.getUniformLocation(progEffect, "u_idle");
+
+  gl.useProgram(progBlit);
+  loc.b_pos   = gl.getAttribLocation(progBlit, "a_pos");
+  loc.b_tex   = gl.getUniformLocation(progBlit, "u_tex");
+
+  texSrc = createTexture(); texA = createTexture(); texB = createTexture();
+  fboA = createFBO(texA); fboB = createFBO(texB);
+
+  glResize(); glClear();
+}
+function glResize(){
+  if(!gl) glInit();
+  if(!gl) return;
+  gl.viewport(0,0,glCanvas.width, glCanvas.height);
+  gl.bindTexture(gl.TEXTURE_2D, texA);
+  gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA,
+    glCanvas.width, glCanvas.height, 0, gl.RGBA,
+    gl.UNSIGNED_BYTE, null);
+  gl.bindTexture(gl.TEXTURE_2D, texB);
+  gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA,
+    glCanvas.width, glCanvas.height, 0, gl.RGBA,
+    gl.UNSIGNED_BYTE, null);
+}
+function glClear(){
+  if(!gl) return;
+  gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+  gl.viewport(0,0,glCanvas.width, glCanvas.height);
+  gl.clearColor(0,0,0,1);
+  gl.clear(gl.COLOR_BUFFER_BIT);
+}
+function createTexture(){
+  const t = gl.createTexture();
+  gl.bindTexture(gl.TEXTURE_2D, t);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+  return t;
+}
+function createFBO(tex){
+  const fb = gl.createFramebuffer();
+  gl.bindFramebuffer(gl.FRAMEBUFFER, fb);
+  gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0,
+    gl.TEXTURE_2D, tex, 0);
+  gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+  return fb;
+}
+function createProgram(vsSrc, fsSrc){
+  const vs = gl.createShader(gl.VERTEX_SHADER);
+  gl.shaderSource(vs, vsSrc); gl.compileShader(vs);
+  if(!gl.getShaderParameter(vs, gl.COMPILE_STATUS))
+    throw new Error(gl.getShaderInfoLog(vs));
+  const fs = gl.createShader(gl.FRAGMENT_SHADER);
+  gl.shaderSource(fs, fsSrc); gl.compileShader(fs);
+  if(!gl.getShaderParameter(fs, gl.COMPILE_STATUS))
+    throw new Error(gl.getShaderInfoLog(fs));
+  const p = gl.createProgram();
+  gl.attachShader(p,vs); gl.attachShader(p,fs); gl.linkProgram(p);
+  if(!gl.getProgramParameter(p, gl.LINK_STATUS))
+    throw new Error(gl.getProgramInfoLog(p));
+  return p;
+}
+
+const VS = `
+  attribute vec2 a_pos;
+  varying vec2 v_uv;
+  void main(){
+    v_uv = a_pos * 0.5 + 0.5;
+    gl_Position = vec4(a_pos, 0.0, 1.0);
+  }
+`;
+
+/* u_idle: Start演出（強めのノイズ/走査線など） */
+const FS = `
+  precision mediump float;
+  varying vec2 v_uv;
+  uniform sampler2D u_tex, u_prev;
+  uniform vec2  u_res;
+  uniform float u_time;
+  uniform vec4  u_p1;  // (degrade, dist, chroma, pixelate)
+  uniform vec4  u_p2;  // (grain, glitchRate, glitchStr, desat)
+  uniform vec4  u_p3;  // (feedback, sym, vignette, mirrorFlag)
+  uniform vec2  u_seed;
+  uniform float u_flipY, u_idle;
+
+  float hash21(vec2 p){
+    return fract(sin(dot(p, vec2(127.1,311.7))) * 43758.5453123);
+  }
+  float noise(vec2 p){
+    vec2 i=floor(p), f=fract(p);
+    float a=hash21(i), b=hash21(i+vec2(1.,0.));
+    float c=hash21(i+vec2(0.,1.)), d=hash21(i+vec2(1.,1.));
+    vec2 u=f*f*(3.-2.*f);
+    return mix(mix(a,b,u.x), mix(c,d,u.x), u.y);
+  }
+  float fbm(vec2 p){
+    float s=0., a=0.5;
+    for(int i=0;i<5;i++){ s+=a*noise(p); p*=2.0; a*=0.5; }
+    return s;
+  }
+  vec3 toGray(vec3 c){
+    float y = dot(c, vec3(0.2126,0.7152,0.0722)); return vec3(y);
+  }
+
+  void main(){
+    float degrade = clamp(u_p1.x, 0.0, 1.0);
+    float distortion = u_p1.y;
+    float chroma = u_p1.z;
+    float pixelate = u_p1.w;
+
+    float grain = u_p2.x;
+    float glitchRate = u_p2.y;
+    float glitchStr  = u_p2.z;
+    float desat = u_p2.w;
+
+    float feedback = u_p3.x;
+    float sym = u_p3.y;
+    float vignette = u_p3.z;
+    float mirrorFlag = u_p3.w;
+
+    vec2 uv = v_uv;
+    if(mirrorFlag > 0.5) uv.x = 1.0 - uv.x;
+    if(u_flipY > 0.5)    uv.y = 1.0 - uv.y;
+
+    if(u_idle > 0.5){
+      float t = u_time;
+
+      float D = mix(0.15, 0.6, distortion);
+      float G = grain * 0.8;
+      float C = chroma * 0.8;
+      float PX= pixelate * 0.4;
+      float FB= feedback * 0.45;
+      float VG= mix(0.35, 0.9, vignette);
+
+      float rows = u_res.y;
+      float row = floor(uv.y * rows);
+      float gate = step(0.72,
+        hash21(vec2(row, floor(t*7.0)+u_seed.x)));
+      float offs = (hash21(vec2(row*1.7, floor(t*5.0)+u_seed.y))-0.5);
+      uv.x += gate * offs * (0.03 + 0.12 * glitchStr);
+
+      vec2 flow = vec2(
+        fbm(uv*2.6 + vec2( t*0.07 + u_seed.x, 0.0 )),
+        fbm(uv*2.6 + vec2( 0.0, -t*0.06 + u_seed.y ))
+      ) - 0.5;
+      uv += flow * (0.12 + 0.28*D);
+
+      if(PX > 0.001){
+        vec2 grid = mix(u_res, vec2(18.0,18.0), PX);
+        uv = floor(uv * grid) / grid;
+      }
+
+      vec2 center = vec2(0.5);
+      vec2 dir = (uv - center);
+      vec2 ab = dir * (0.018 + 0.03*C);
+
+      float base = fbm(uv*3.0 + vec2(t*0.03, -t*0.025));
+      vec3 col;
+      col.r = base + 0.12 * fbm((uv+ab)*3.6 + vec2(t*0.02,0.0));
+      col.g = base + 0.12 * fbm((uv)*3.6   + vec2(0.0,t*0.02));
+      col.b = base + 0.12 * fbm((uv-ab)*3.6 + vec2(-t*0.02,0.0));
+      col = mix(vec3(0.03,0.05,0.08), vec3(0.15,0.22,0.34), col);
+
+      float snow = (hash21(uv*u_res + vec2(t*90.0, t*73.0))-0.5)*2.0;
+      col += snow * (0.08 + 0.22*G);
+
+      float scan = 0.96 + 0.04*sin(uv.y*u_res.y*3.14159*0.75 + t*9.0);
+      col *= scan;
+
+      if(FB > 0.001){
+        vec2 uvp = (uv - center) * (1.0 - 0.02*FB) + center;
+        vec3 prev = texture2D(u_prev, clamp(uvp,0.0,1.0)).rgb;
+        col = mix(col, prev, 0.28 * FB);
+      }
+
+      if(VG > 0.001){
+        float dd = distance(uv, vec2(0.5));
+        float vv = 1.0 - pow(dd, 1.35) * (1.45 * VG);
+        col *= clamp(vv, 0.0, 1.0);
+      }
+
+      gl_FragColor = vec4(col, 1.0);
+      return;
+    }
+
+    /* 通常（カメラ） */
+    float fold = sym * degrade;
+    if(fold > 0.001){
+      float k = mix(1.0, 6.0, fold);
+      float seg = floor(uv.x * k);
+      float segC = (seg + 0.5)/k;
+      float local = uv.x - segC;
+      uv.x = segC + abs(local) * (1.0 - 0.85*fold);
+    }
+
+    if(pixelate*degrade > 0.001){
+      vec2 grid = mix(u_res, vec2(18.0,18.0), pixelate*degrade);
+      uv = floor(uv * grid) / grid;
+    }
+
+    float t2 = u_time;
+    float flowScale = mix(0.7, 6.0, distortion);
+    vec2 n1 = vec2(
+      fbm(uv*flowScale + vec2(0.0, t2*0.08 + u_seed.x)),
+      fbm(uv*flowScale + vec2(43.2, t2*0.1 + u_seed.y))
+    );
+    vec2 warp = (n1 - 0.5) * 2.0;
+    uv += warp * (0.03 * distortion * degrade);
+
+    if(glitchRate*degrade > 0.001){
+      float rows2 = u_res.y;
+      float row2 = floor(uv.y * rows2);
+      float gate2 = step(1.0 - glitchRate*degrade,
+        hash21(vec2(row2, floor(t2*13.0)+u_seed.x)));
+      float offs2 = (hash21(vec2(row2*1.13, floor(t2*7.0)+u_seed.y))-0.5);
+      uv.x += gate2 * offs2 * (0.08 * glitchStr * degrade);
+    }
+
+    vec2 center = vec2(0.5);
+    vec2 dir = (uv - center);
+    vec2 ab2 = dir * (0.02 * chroma * degrade);
+    vec3 col2;
+    col2.r = texture2D(u_tex, clamp(uv + ab2, 0.0, 1.0)).r;
+    col2.g = texture2D(u_tex, clamp(uv,      0.0, 1.0)).g;
+    col2.b = texture2D(u_tex, clamp(uv - ab2, 0.0, 1.0)).b;
+
+    float g2 = (hash21(uv*u_res + vec2(t2*60.0, t2*41.0))-0.5)*2.0;
+    col2 += g2 * (0.08 * grain * degrade);
+
+    if(feedback*degrade > 0.001){
+      vec2 uvPrev = (uv - center) * (1.0 - 0.03*feedback*degrade)+center;
+      uvPrev += warp * 0.5 * feedback * degrade;
+      vec3 prevCol = texture2D(u_prev, clamp(uvPrev,0.0,1.0)).rgb;
+      col2 = mix(col2, prevCol, 0.45 * feedback * degrade);
+    }
+
+    if(desat*degrade > 0.001){
+      vec3 gy = toGray(col2);
+      col2 = mix(col2, gy, desat * degrade);
+    }
+    if(vignette*degrade > 0.001){
+      float ddd = distance(uv, center);
+      float vv2 = 1.0 - pow(ddd, 1.4) * (1.2 * vignette * degrade);
+      col2 *= clamp(vv2, 0.0, 1.0);
+    }
+    gl_FragColor = vec4(col2, 1.0);
+  }
+`;
+
+const FS_BLIT = `
+  precision mediump float;
+  varying vec2 v_uv;
+  uniform sampler2D u_tex;
+  void main(){ gl_FragColor = texture2D(u_tex, v_uv); }
+`;
+
+function uploadToSrcTex(image){
+  if(!gl) return;
+  gl.bindTexture(gl.TEXTURE_2D, texSrc);
+  try{
+    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA,
+      gl.UNSIGNED_BYTE, image);
+  }catch(e){
+    const tmp = document.createElement("canvas");
+    tmp.width = capCanvas.width; tmp.height = capCanvas.height;
+    tmp.getContext("2d").drawImage(image,0,0);
+    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA,
+      gl.UNSIGNED_BYTE, tmp);
+  }
+}
+
+function drawEffect(now, image, degrade, mirrorFlag){
+  if(!gl) return;
+
+  gl.useProgram(progEffect);
+  gl.bindFramebuffer(gl.FRAMEBUFFER, fboB);
+  gl.viewport(0,0,glCanvas.width, glCanvas.height);
+
+  gl.bindBuffer(gl.ARRAY_BUFFER, quadVBO);
+  gl.enableVertexAttribArray(loc.e_pos);
+  gl.vertexAttribPointer(loc.e_pos, 2, gl.FLOAT, false, 0, 0);
+
+  if(idleMode){
+    gl.activeTexture(gl.TEXTURE0); gl.bindTexture(gl.TEXTURE_2D, texA);
+    gl.uniform1i(loc.e_tex, 0);
+    gl.activeTexture(gl.TEXTURE1); gl.bindTexture(gl.TEXTURE_2D, texA);
+    gl.uniform1i(loc.e_prev, 1);
+  }else{
+    uploadToSrcTex(image);
+    gl.activeTexture(gl.TEXTURE0); gl.bindTexture(gl.TEXTURE_2D, texSrc);
+    gl.uniform1i(loc.e_tex, 0);
+    gl.activeTexture(gl.TEXTURE1); gl.bindTexture(gl.TEXTURE_2D, texA);
+    gl.uniform1i(loc.e_prev, 1);
+  }
+
+  gl.uniform1f(loc.e_time, now/1000);
+  gl.uniform2f(loc.e_res, glCanvas.width, glCanvas.height);
+
+  const d = idleMode ? 0.45 : degrade;
+  gl.uniform4f(loc.e_p1, d, cfg.dist, cfg.chroma, cfg.pixelate);
+  gl.uniform4f(loc.e_p2, cfg.grain, cfg.glitchRate,
+    cfg.glitchStr, cfg.desat);
+  gl.uniform4f(loc.e_p3, cfg.feedback, cfg.sym, 0.7,
+    mirrorFlag ? 1.0 : 0.0);
+  gl.uniform2f(loc.e_seed, Math.random()*1000.0, Math.random()*1000.0);
+  gl.uniform1f(loc.e_flipY, cfg.flipY ? 1.0 : 0.0);
+  gl.uniform1f(loc.e_idle, idleMode ? 1.0 : 0.0);
+
+  gl.drawArrays(gl.TRIANGLES, 0, 6);
+
+  gl.useProgram(progBlit);
+  gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+  gl.viewport(0,0,glCanvas.width, glCanvas.height);
+
+  gl.bindBuffer(gl.ARRAY_BUFFER, quadVBO);
+  gl.enableVertexAttribArray(loc.b_pos);
+  gl.vertexAttribPointer(loc.b_pos, 2, gl.FLOAT, false, 0, 0);
+
+  gl.activeTexture(gl.TEXTURE0); gl.bindTexture(gl.TEXTURE_2D, texB);
+  gl.uniform1i(loc.b_tex, 0);
+  gl.drawArrays(gl.TRIANGLES, 0, 6);
+
+  const tt = texA; texA = texB; texB = tt;
+  const ff = fboA; fboA = fboB; fboB = ff;
+}
+
+function renderLoop(){
+  requestAnimationFrame(renderLoop);
+  glInit();
+  const now = performance.now();
+
+  if(idleMode){
+    drawEffect(now, null, 0.0, cfg.mirror);
+    return;
+  }
+  if(!running){ glClear(); return; }
+
+  const target = delayTargetMs(now);
+  const idx = findIndexFor(now - target);
+  if(idx >= 0){
+    const f = frames[idx];
+    const deg = degradeAmount(now);
+    drawEffect(now, f.bmp, deg, cfg.mirror);
+  }else{
+    glClear();
+  }
+}
+
+function main(){
+  setupBroadcast();
+  setupWebRTCIfNeeded();
+  window.addEventListener("beforeunload", exitToSplash);
+  renderLoop();
+}
+main();
+</script>
+</body>
+</html>

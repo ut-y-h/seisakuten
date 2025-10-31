@@ -1,0 +1,665 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport"
+  content="width=device-width,initial-scale=1" />
+<title>Deconstruct — 管理</title>
+<style>
+  :root{
+    --bg:#0f1115; --pane:#181b21; --text:#e6e8eb; --muted:#97a0ad;
+    --accent:#7aa2ff; --border:#262a33; --danger:#ff6b6b; --ok:#6bffa1;
+  }
+  *{ box-sizing:border-box }
+  body{
+    margin:0; background:linear-gradient(135deg,#0b0e14,#101522 45%,
+      #0b0f18); color:var(--text);
+    font-family:ui-sans-serif,system-ui,Segoe UI,Helvetica,Arial,
+      sans-serif; padding:16px;
+  }
+  .app{ max-width:1200px; margin:0 auto; display:grid; gap:16px }
+  .pane{
+    background:var(--pane); border:1px solid var(--border);
+    border-radius:14px; padding:14px;
+    box-shadow:0 10px 25px rgba(0,0,0,.35),
+      inset 0 1px 0 rgba(255,255,255,.03);
+  }
+  h1{ margin:0; font-size:20px }
+  h2{ margin:0 0 8px; font-size:14px; letter-spacing:.03em;
+    color:#cfd6e3; text-transform:uppercase }
+  .header{
+    display:flex; justify-content:space-between; gap:12px; align-items:end
+  }
+  .btns{ display:flex; gap:10px; flex-wrap:wrap; align-items:center }
+  button{
+    appearance:none; border:1px solid var(--border); border-radius:10px;
+    padding:10px 14px; cursor:pointer;
+    background:linear-gradient(180deg,#24304a,#1a2233); color:var(--text);
+    font-weight:600
+  }
+  button:hover{ filter:brightness(1.06) }
+  .danger{ background:linear-gradient(180deg,#3a1b24,#2a1219);
+    border-color:#52222f }
+  .preset{ font-size:12px; padding:6px 10px }
+  .badge{
+    display:inline-flex; align-items:center; gap:6px;
+    padding:6px 10px; border-radius:999px;
+    background:rgba(107,255,161,.16); border:1px solid #2a5038;
+    font-size:12px; color:#d8ffe9
+  }
+  .grid{ display:grid; gap:12px; grid-template-columns:1fr 1fr }
+  @media (max-width:980px){ .grid{ grid-template-columns:1fr } }
+  .control{
+    display:grid; grid-template-columns:160px 1fr; align-items:center;
+    gap:10px
+  }
+  .group{ display:grid; gap:12px }
+  .section{ display:grid; gap:10px }
+  .range-row{ display:flex; gap:8px; align-items:center }
+  .range-row output{ min-width:72px; text-align:right; color:#9fd5ff;
+    font-variant-numeric:tabular-nums }
+  input[type="range"]{ width:100% }
+  select{
+    width:100%; padding:8px 10px; border-radius:10px;
+    border:1px solid var(--border); background:#151925; color:var(--text)
+  }
+  .switch{ display:flex; align-items:center; gap:8px }
+  .muted{ color:var(--muted) }
+  textarea{
+    width:100%; min-height:120px; padding:10px; border-radius:10px;
+    border:1px solid var(--border); background:#0f1420; color:var(--text);
+    font-family:ui-monospace,Menlo,Consolas,monospace;
+  }
+  .row2{ display:grid; grid-template-columns:1fr 1fr; gap:12px }
+  @media (max-width:980px){ .row2{ grid-template-columns:1fr } }
+</style>
+</head>
+<body>
+<div class="app">
+  <section class="pane" style="display:grid; gap:12px">
+    <div class="header">
+      <h1>Deconstruct — 管理</h1>
+      <div class="btns">
+        <span id="connBadge" class="badge">接続中</span>
+        <button id="openDisplay">表示タブを開く</button>
+        <button id="forceExit" class="danger">表示をStart画面に戻す</button>
+      </div>
+    </div>
+
+    <div class="row2">
+      <div class="pane" style="padding:10px">
+        <div style="display:flex;justify-content:space-between;
+          align-items:center;gap:10px;font-size:12.5px">
+          <div>接続状況: <strong id="linkStat">Broadcast/WebRTC</strong>
+          </div>
+          <div>配信先: <strong id="targetCount">0</strong> クライアント
+          </div>
+        </div>
+      </div>
+      <div class="pane" style="padding:10px">
+        <div style="display:flex;gap:10px;align-items:center;
+          justify-content:space-between;font-size:12.5px">
+          <button id="makeOffer">Offer を作成</button>
+          <button id="applyAnswer">Answer を適用</button>
+        </div>
+      </div>
+    </div>
+
+    <div class="grid">
+      <!-- 左：遅延＆LFO -->
+      <div class="section">
+        <h2>遅延</h2>
+        <div class="group pane">
+          <div class="control">
+            <div><strong>波形</strong><br><small>遅延の揺れ</small></div>
+            <select id="wave">
+              <option value="sine">正弦</option>
+              <option value="tri">三角</option>
+              <option value="smooth">スムーズランダム</option>
+            </select>
+          </div>
+          <div class="control">
+            <div><strong>最小遅延</strong><br><small>ms</small></div>
+            <div class="range-row">
+              <input id="minDelay" type="range" min="0" max="3000"
+                step="10" value="300" />
+              <output id="minDelayVal">300 ms</output>
+            </div>
+          </div>
+          <div class="control">
+            <div><strong>最大遅延</strong><br><small>ms</small></div>
+            <div class="range-row">
+              <input id="maxDelay" type="range" min="200" max="6000"
+                step="10" value="1400" />
+              <output id="maxDelayVal">1400 ms</output>
+            </div>
+          </div>
+          <div class="control">
+            <div><strong>周期</strong><br><small>秒</small></div>
+            <div class="range-row">
+              <input id="period" type="range" min="0.5" max="20"
+                step="0.1" value="5" />
+              <output id="periodVal">5.0 s</output>
+            </div>
+          </div>
+          <div class="control">
+            <div><strong>ゆらぎ</strong></div>
+            <div class="range-row">
+              <input id="rand" type="range" min="0" max="100"
+                step="1" value="20" />
+              <output id="randVal">20%</output>
+            </div>
+          </div>
+          <div class="control">
+            <div><strong>キャプチャFPS</strong></div>
+            <div class="range-row">
+              <input id="fps" type="range" min="5" max="30"
+                step="1" value="20" />
+              <output id="fpsVal">20 fps</output>
+            </div>
+          </div>
+          <div class="control">
+            <div><strong>解像度</strong></div>
+            <select id="res">
+              <option value="160x120">160 × 120</option>
+              <option value="320x240" selected>320 × 240</option>
+              <option value="480x360">480 × 360</option>
+              <option value="640x480">640 × 480</option>
+            </select>
+          </div>
+          <div class="control">
+            <div><strong>左右反転</strong></div>
+            <label class="switch">
+              <input id="mirror" type="checkbox" checked /> 有効
+            </label>
+          </div>
+          <div class="control">
+            <div><strong>上下反転</strong></div>
+            <label class="switch">
+              <input id="flipY" type="checkbox" checked /> 有効
+            </label>
+          </div>
+        </div>
+
+        <h2>崩れ周期（Degrade LFO）</h2>
+        <div class="group pane">
+          <div class="control">
+            <div><strong>自動デグレード</strong></div>
+            <label class="switch">
+              <input id="degAuto" type="checkbox" checked /> 有効
+            </label>
+          </div>
+          <div class="control">
+            <div><strong>最小</strong></div>
+            <div class="range-row">
+              <input id="degMin" type="range" min="0" max="100"
+                step="1" value="5" />
+              <output id="degMinVal">5%</output>
+            </div>
+          </div>
+          <div class="control">
+            <div><strong>最大</strong></div>
+            <div class="range-row">
+              <input id="degMax" type="range" min="0" max="100"
+                step="1" value="75" />
+              <output id="degMaxVal">75%</output>
+            </div>
+          </div>
+          <div class="control">
+            <div><strong>周期</strong></div>
+            <div class="range-row">
+              <input id="degPeriod" type="range" min="1" max="30"
+                step="0.1" value="8" />
+              <output id="degPeriodVal">8.0 s</output>
+            </div>
+          </div>
+          <div class="control">
+            <div><strong>ランダム度</strong></div>
+            <div class="range-row">
+              <input id="degRand" type="range" min="0" max="100"
+                step="1" value="25" />
+              <output id="degRandVal">25%</output>
+            </div>
+          </div>
+          <div class="control" id="degManualRow" style="display:none">
+            <div><strong>手動デグレード</strong></div>
+            <div class="range-row">
+              <input id="degManual" type="range" min="0" max="100"
+                step="1" value="30" />
+              <output id="degManualVal">30%</output>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- 右：視覚効果＆プリセット＆時間遷移 -->
+      <div class="section">
+        <h2>視覚効果</h2>
+        <div class="group pane">
+          <div class="control">
+            <div><strong>歪み</strong></div>
+            <div class="range-row">
+              <input id="dist" type="range" min="0" max="100"
+                step="1" value="60" />
+              <output id="distVal">60%</output>
+            </div>
+          </div>
+          <div class="control">
+            <div><strong>粒子</strong></div>
+            <div class="range-row">
+              <input id="grain" type="range" min="0" max="100"
+                step="1" value="30" />
+              <output id="grainVal">30%</output>
+            </div>
+          </div>
+          <div class="control">
+            <div><strong>グリッチ頻度</strong></div>
+            <div class="range-row">
+              <input id="glitchRate" type="range" min="0" max="100"
+                step="1" value="25" />
+              <output id="glitchRateVal">25%</output>
+            </div>
+          </div>
+          <div class="control">
+            <div><strong>グリッチ強度</strong></div>
+            <div class="range-row">
+              <input id="glitchStr" type="range" min="0" max="100"
+                step="1" value="40" />
+              <output id="glitchStrVal">40%</output>
+            </div>
+          </div>
+          <div class="control">
+            <div><strong>色ずれ</strong></div>
+            <div class="range-row">
+              <input id="chroma" type="range" min="0" max="100"
+                step="1" value="35" />
+              <output id="chromaVal">35%</output>
+            </div>
+          </div>
+          <div class="control">
+            <div><strong>ピクセル化</strong></div>
+            <div class="range-row">
+              <input id="pixelate" type="range" min="0" max="100"
+                step="1" value="15" />
+              <output id="pixelateVal">15%</output>
+            </div>
+          </div>
+          <div class="control">
+            <div><strong>脱彩</strong></div>
+            <div class="range-row">
+              <input id="desat" type="range" min="0" max="100"
+                step="1" value="20" />
+              <output id="desatVal">20%</output>
+            </div>
+          </div>
+          <div class="control">
+            <div><strong>残像</strong></div>
+            <div class="range-row">
+              <input id="feedback" type="range" min="0" max="100"
+                step="1" value="30" />
+              <output id="feedbackVal">30%</output>
+            </div>
+          </div>
+          <div class="control">
+            <div><strong>対称</strong></div>
+            <div class="range-row">
+              <input id="sym" type="range" min="0" max="100"
+                step="1" value="0" />
+              <output id="symVal">0%</output>
+            </div>
+          </div>
+        </div>
+
+        <h2>時間遷移</h2>
+        <div class="group pane">
+          <div class="control">
+            <div><strong>時間遷移モード</strong></div>
+            <label class="switch">
+              <input id="timeMode" type="checkbox" /> 有効
+            </label>
+          </div>
+          <div class="control">
+            <div><strong>遷移時間</strong><br><small>秒</small></div>
+            <div class="range-row">
+              <input id="transDur" type="range" min="1" max="300"
+                step="1" value="10" />
+              <output id="transDurVal">10 s</output>
+            </div>
+          </div>
+        </div>
+
+        <h2>プリセット</h2>
+        <div class="group pane">
+          <div class="btns">
+            <button class="preset" id="presetCalm">Subtle Drift</button>
+            <button class="preset" id="presetUncanny">Uncanny Mirror
+            </button>
+            <button class="preset" id="presetBreak">Breakdown</button>
+            <button class="preset" id="presetReturn">Return to Self
+            </button>
+          </div>
+        </div>
+
+        <h2>手動ペアリング（別端末）</h2>
+        <div class="group pane">
+          <div class="row2">
+            <div>
+              <div class="muted" style="margin-bottom:6px">Offer</div>
+              <textarea id="offerBox"
+                placeholder="Offer（管理側で生成）"></textarea>
+            </div>
+            <div>
+              <div class="muted" style="margin-bottom:6px">Answer</div>
+              <textarea id="answerBox"
+                placeholder="display側のAnswerを貼り付け"></textarea>
+            </div>
+          </div>
+          <div class="muted">
+            同一端末は「表示タブを開く」で自動接続。別端末は
+            <strong>Offer</strong>→display.html?rtc=1 に貼付→
+            返ってきた <strong>Answer</strong> を本画面へ貼付。
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+</div>
+
+<script>
+/**
+ * @file Deconstruct 管理（日本語UI）
+ * @note Broadcast/Port/WebRTCで display.html に配信。
+ *       JSDoc / 80列 / ダブルクォート。
+ */
+
+/** @typedef {Record<string, any>} AnyMap */
+
+const $ = (s) => document.querySelector(s);
+
+let bc = null;
+/** @type {Set<MessagePort>} */ const openedPorts = new Set();
+/** @type {Set<RTCDataChannel>} */ const rtcPeers = new Set();
+/** @type {RTCPeerConnection|null} */ let pc = null;
+
+const connBadge = $("#connBadge");
+const targetCount = $("#targetCount");
+const linkStat = $("#linkStat");
+
+/** 設定収集 */
+function collectConfig(){
+  /** @type {AnyMap} */
+  const res = {};
+  const val = (sel) => /** @type {HTMLInputElement} */($(sel)).value;
+  const chk = (sel) => /** @type {HTMLInputElement} */($(sel)).checked;
+
+  const [w, h] = (/** @type {HTMLSelectElement} */($("#res")).value)
+    .split("x").map(Number);
+
+  res.kind = "config";
+  res.wave = /** @type {HTMLSelectElement} */($("#wave")).value;
+  res.minDelay = +val("#minDelay");
+  res.maxDelay = +val("#maxDelay");
+  res.period = +val("#period");
+  res.rand = +val("#rand") / 100;
+  res.fps = +val("#fps");
+  res.width = w; res.height = h;
+  res.mirror = chk("#mirror");
+  res.flipY = chk("#flipY");
+
+  res.degAuto = chk("#degAuto");
+  res.degMin = +val("#degMin") / 100;
+  res.degMax = +val("#degMax") / 100;
+  res.degPeriod = +val("#degPeriod");
+  res.degRand = +val("#degRand") / 100;
+  res.degManual = +val("#degManual") / 100;
+
+  res.dist = +val("#dist") / 100;
+  res.grain = +val("#grain") / 100;
+  res.glitchRate = +val("#glitchRate") / 100;
+  res.glitchStr = +val("#glitchStr") / 100;
+  res.chroma = +val("#chroma") / 100;
+  res.pixelate = +val("#pixelate") / 100;
+  res.desat = +val("#desat") / 100;
+  res.feedback = +val("#feedback") / 100;
+  res.sym = +val("#sym") / 100;
+
+  /* 時間遷移 */
+  res.timeMode = chk("#timeMode");
+  res.transDur = +val("#transDur");
+
+  return res;
+}
+
+/** 配信 */
+function sendToAll(msg){
+  if (bc) bc.postMessage(msg);
+  openedPorts.forEach((p) => p.postMessage(msg));
+  rtcPeers.forEach((ch) => { try { ch.send(JSON.stringify(msg)); }
+    catch {} });
+  refreshTargets();
+}
+
+/** 接続表示更新 */
+function refreshTargets(){
+  const n = (bc ? 1 : 0) + openedPorts.size + rtcPeers.size;
+  targetCount.textContent = String(n);
+  connBadge.textContent = n > 0 ? "接続中" : "未接続";
+  connBadge.style.background =
+    n > 0 ? "rgba(107,255,161,.16)" : "rgba(122,162,255,.14)";
+  connBadge.style.borderColor = n > 0 ? "#2a5038" : "#2a3550";
+}
+
+/** UI結線 */
+function wireUI(){
+  const fmtMs = (x) => `${Math.round(x)} ms`;
+  const fmtS  = (x) => `${(+x).toFixed(1)} s`;
+
+  const min = /** @type {HTMLInputElement} */($("#minDelay"));
+  const max = /** @type {HTMLInputElement} */($("#maxDelay"));
+  const minOut = /** @type {HTMLOutputElement} */($("#minDelayVal"));
+  const maxOut = /** @type {HTMLOutputElement} */($("#maxDelayVal"));
+  const clamp = () => {
+    if (+min.value > +max.value) max.value = min.value;
+    minOut.textContent = fmtMs(+min.value);
+    maxOut.textContent = fmtMs(+max.value);
+    sendToAll(collectConfig());
+  };
+  min.addEventListener("input", clamp);
+  max.addEventListener("input", clamp);
+
+  const bind = (sel, fmt = (v)=>v) => {
+    const el = /** @type {HTMLInputElement} */($(sel));
+    const out = /** @type {HTMLOutputElement} */($(sel + "Val"));
+    el.addEventListener("input", () => {
+      if (out) {
+        const v = el.type === "range" ? +el.value : el.value;
+        out.textContent = String(fmt(v));
+      }
+      sendToAll(collectConfig());
+    });
+  };
+
+  bind("#period", (v) => fmtS(+v));
+  bind("#rand", (v) => v + "%");
+  bind("#fps", (v) => v + " fps");
+  bind("#degMin", (v) => v + "%");
+  bind("#degMax", (v) => v + "%");
+  bind("#degPeriod", (v) => fmtS(+v));
+  bind("#degRand", (v) => v + "%");
+  bind("#degManual", (v) => v + "%");
+  ["#dist","#grain","#glitchRate","#glitchStr",
+   "#chroma","#pixelate","#desat","#feedback",
+   "#sym"].forEach((id) => bind(id, (v)=> v + "%"));
+
+  ["#wave","#mirror","#flipY","#res",
+   "#timeMode","#transDur"].forEach((sel) => {
+    const el = /** @type {HTMLInputElement|HTMLSelectElement} */($(sel));
+    el.addEventListener("change", () => sendToAll(collectConfig()));
+    if(sel==="#transDur") bind("#transDur", (v)=> v + " s");
+  });
+
+  const degAuto = /** @type {HTMLInputElement} */($("#degAuto"));
+  const manualRow = /** @type {HTMLDivElement} */($("#degManualRow"));
+  degAuto.addEventListener("change", () => {
+    manualRow.style.display = degAuto.checked ? "none" : "grid";
+    sendToAll(collectConfig());
+  });
+
+  /* プリセット */
+  const setPreset = (p) => {
+    const set = (sel, v, factor = 1) => {
+      const el = /** @type {HTMLInputElement} */($(sel));
+      el.value = String(Math.round(v * factor));
+      const out = /** @type {HTMLOutputElement} */($(sel + "Val"));
+      if (out) {
+        out.textContent =
+          factor === 100 ? `${Math.round(v * 100)}%` : String(v);
+      }
+    };
+    if ("degMin" in p) set("#degMin", p.degMin, 100);
+    if ("degMax" in p) set("#degMax", p.degMax, 100);
+    if ("degPeriod" in p) {
+      const el = /** @type {HTMLInputElement} */($("#degPeriod"));
+      el.value = String(p.degPeriod);
+      $("#degPeriodVal").textContent = `${p.degPeriod.toFixed(1)} s`;
+    }
+    ["dist","grain","glitchRate","glitchStr","chroma",
+     "pixelate","desat","feedback","sym"].forEach((k) => {
+      if (k in p) set("#" + k, p[k], 100);
+    });
+    sendToAll(collectConfig());
+  };
+
+  $("#presetCalm").addEventListener("click", () => {
+    setPreset({
+      degMin:0.05, degMax:0.25, degPeriod:10,
+      dist:0.25, grain:0.15, glitchRate:0.08, glitchStr:0.15,
+      chroma:0.15, pixelate:0.05, desat:0.05, feedback:0.15,
+      sym:0.0
+    });
+  });
+  $("#presetUncanny").addEventListener("click", () => {
+    setPreset({
+      degMin:0.15, degMax:0.55, degPeriod:7,
+      dist:0.5, grain:0.25, glitchRate:0.2, glitchStr:0.35,
+      chroma:0.35, pixelate:0.1, desat:0.25, feedback:0.35,
+      sym:0.45
+    });
+  });
+  $("#presetBreak").addEventListener("click", () => {
+    setPreset({
+      degMin:0.4, degMax:0.95, degPeriod:6,
+      dist:0.85, grain:0.6, glitchRate:0.6, glitchStr:0.8,
+      chroma:0.6, pixelate:0.45, desat:0.5, feedback:0.6,
+      sym:0.3
+    });
+  });
+  $("#presetReturn").addEventListener("click", () => {
+    setPreset({
+      degMin:0.02, degMax:0.15, degPeriod:12,
+      dist:0.15, grain:0.1, glitchRate:0.05, glitchStr:0.1,
+      chroma:0.08, pixelate:0.0, desat:0.0, feedback:0.1,
+      sym:0.0
+    });
+  });
+}
+
+/** 表示タブを開き、MessagePortで直結 */
+function openDisplayTab(){
+  const win = window.open("display.html", "_blank");
+  if (!win) return;
+  const chan = new MessageChannel();
+  openedPorts.add(chan.port1);
+  chan.port1.start();
+  chan.port1.onmessage = (ev) => {
+    if (ev.data && ev.data.kind === "hello") {
+      chan.port1.postMessage(collectConfig());
+      refreshTargets();
+    }
+  };
+  const give = () => {
+    try { win.postMessage({ kind:"port" }, "*", [chan.port2]); }
+    catch {}
+  };
+  setTimeout(give, 250);
+}
+
+/** BroadcastChannel 準備 */
+function setupBroadcast(){
+  try{
+    bc = new BroadcastChannel("deconstruct-control");
+    bc.onmessage = (ev) => {
+      if (ev.data && ev.data.kind === "hello") {
+        bc.postMessage(collectConfig());
+      }
+    };
+    linkStat.textContent = "Broadcast: 有効";
+  }catch{
+    linkStat.textContent = "Broadcast: 不可";
+  }
+}
+
+/** WebRTC */
+function setupWebRTC(){
+  const ice = { iceServers: [] };
+  pc = new RTCPeerConnection(ice);
+  const ch = pc.createDataChannel("cfg");
+  ch.onopen = () => { rtcPeers.add(ch); refreshTargets(); };
+  ch.onclose = () => { rtcPeers.delete(ch); refreshTargets(); };
+  ch.onmessage = () => {};
+}
+
+/** Offer 生成 */
+async function makeOffer(){
+  if (!pc) setupWebRTC();
+  if (!pc) return;
+  const offer = await pc.createOffer();
+  await pc.setLocalDescription(offer);
+  await waitIceGathering(pc);
+  /** @type {HTMLTextAreaElement} */
+  const box = $("#offerBox");
+  box.value = JSON.stringify(pc.localDescription);
+}
+
+/** Answer 適用 */
+async function applyAnswer(){
+  if (!pc) return;
+  const box = /** @type {HTMLTextAreaElement} */($("#answerBox"));
+  try{
+    const desc = JSON.parse(box.value);
+    await pc.setRemoteDescription(desc);
+  }catch{
+    alert("Answer の形式が不正です");
+  }
+}
+
+/** 強制Exit（Start画面へ戻す） */
+function doForceExit(){
+  const msg = { kind:"cmd", action:"forceExit" };
+  sendToAll(msg);
+}
+
+/** @param {RTCPeerConnection} p */
+function waitIceGathering(p){
+  return new Promise((res)=>{
+    if (p.iceGatheringState === "complete") return res(null);
+    p.addEventListener("icegatheringstatechange", () => {
+      if (p.iceGatheringState === "complete") res(null);
+    });
+  });
+}
+
+function main(){
+  setupBroadcast();
+  wireUI();
+  $("#openDisplay").addEventListener("click", openDisplayTab);
+  $("#makeOffer").addEventListener("click", makeOffer);
+  $("#applyAnswer").addEventListener("click", applyAnswer);
+  $("#forceExit").addEventListener("click", doForceExit);
+  sendToAll(collectConfig());
+  setInterval(() => sendToAll(collectConfig()), 3000);
+}
+main();
+</script>
+</body>
+</html>
